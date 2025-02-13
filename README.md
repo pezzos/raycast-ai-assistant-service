@@ -23,36 +23,125 @@ sudo python3 test_installation.py
 
 ## Manual Testing
 
-You can test the service directly using a Python client:
-
-```python
-import socket
-import json
-
-# Connect to the service
-client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-client.connect('/tmp/raycast_audio_service.sock')
-
-# Start recording
-start_cmd = json.dumps({'action': 'start', 'output_path': '/tmp/test.wav'})
-client.send(start_cmd.encode('utf-8'))
-print(client.recv(1024).decode('utf-8'))  # Should print {"status": "success"}
-
-# Wait a bit and say something...
-input("Press Enter to stop recording...")
-
-# Stop recording
-stop_cmd = json.dumps({'action': 'stop'})
-client.send(stop_cmd.encode('utf-8'))
-print(client.recv(1024).decode('utf-8'))  # Should print {"status": "success"}
-
-# Close connection
-client.close()
-
-# Play back the recording
-import subprocess
-subprocess.run(['afplay', '/tmp/test.wav'])
+You can test the service directly using the provided Python script:
+```bash
+./test_manual.py
 ```
+
+This will:
+1. Start recording
+2. Wait for you to press Enter
+3. Stop recording
+4. Play back the recording
+
+## Raycast Extension Integration
+
+### 1. Install Dependencies
+
+In your Raycast extension project:
+```bash
+npm install @types/node --save-dev
+```
+
+### 2. Add the Audio Client
+
+Create a new file `src/utils/audio_client.ts`:
+
+```typescript
+/// <reference types="node" />
+
+import * as net from 'net';
+import { showHUD, environment } from "@raycast/api";
+
+/**
+ * Class to handle audio recording through the Unix socket service
+ * Make sure the service is installed by running: sudo ./install.sh
+ */
+export class AudioRecorder {
+  private client: net.Socket | null = null;
+  private outputPath: string;
+
+  constructor(outputPath = '/tmp/raycast_recording.wav') {
+    this.outputPath = outputPath;
+  }
+
+  /**
+   * Start recording audio
+   * @throws Error if recording fails to start
+   */
+  async startRecording(): Promise<void> {
+    try {
+      await this.connect();
+      await this.sendCommand({
+        action: 'start',
+        output_path: this.outputPath
+      });
+      await showHUD('Recording started...');
+    } catch (error) {
+      await showHUD('Failed to start recording');
+      throw error;
+    }
+  }
+
+  /**
+   * Stop recording audio
+   * @returns Path to the recorded audio file
+   * @throws Error if recording fails to stop
+   */
+  async stopRecording(): Promise<string> {
+    try {
+      await this.sendCommand({
+        action: 'stop'
+      });
+      await showHUD('Recording stopped');
+      return this.outputPath;
+    } catch (error) {
+      await showHUD('Failed to stop recording');
+      throw error;
+    } finally {
+      if (this.client) {
+        this.client.end();
+        this.client = null;
+      }
+    }
+  }
+
+  // ... see full code in audio_client.ts
+}
+```
+
+### 3. Use in Your Commands
+
+Example usage in a Raycast command:
+
+```typescript
+import { AudioRecorder } from "../utils/audio_client";
+
+export default async function Command() {
+  const recorder = new AudioRecorder();
+
+  try {
+    // When user clicks "Start Recording"
+    await recorder.startRecording();
+
+    // When user clicks "Stop Recording"
+    const audioFile = await recorder.stopRecording();
+    // Use audioFile path to send to your API
+
+  } catch (error) {
+    console.error('Recording failed:', error);
+  }
+}
+```
+
+The `AudioRecorder` class handles:
+- Unix socket connection management
+- Start/stop recording commands
+- Error handling and timeouts
+- Resource cleanup
+- Raycast HUD notifications
+
+By default, audio is saved to `/tmp/raycast_recording.wav`, but you can specify a custom path in the constructor.
 
 ## Development
 
