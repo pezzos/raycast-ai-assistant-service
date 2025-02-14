@@ -47,18 +47,27 @@ class TestAudioServiceInstallation(unittest.TestCase):
         response = json.loads(client.recv(1024).decode('utf-8'))
         self.assertEqual(response['status'], 'success', "Failed to start recording")
 
-        # Wait a bit and stop recording
-        time.sleep(1)
-        stop_cmd = json.dumps({'action': 'stop'})
-        client.send(stop_cmd.encode('utf-8'))
-        response = json.loads(client.recv(1024).decode('utf-8'))
-        self.assertEqual(response['status'], 'success', "Failed to stop recording")
+        # Wait for the recording to start and stop by itself (silence detection)
+        max_wait = 10  # Maximum wait time in seconds
+        start_time = time.time()
+
+        while time.time() - start_time < max_wait:
+            stop_cmd = json.dumps({'action': 'stop'})
+            client.send(stop_cmd.encode('utf-8'))
+            response = json.loads(client.recv(1024).decode('utf-8'))
+
+            if response['status'] == 'success':
+                break
+
+            time.sleep(0.5)
+        else:
+            self.fail("Recording did not stop within timeout period")
 
         client.close()
 
         # Check if file was created
         self.assertTrue(os.path.exists(test_output), "Recording file not created")
-        self.assertTrue(os.path.getsize(test_output) > 0, "Recording file is empty")
+        self.assertGreater(os.path.getsize(test_output), 0, "Recording file is empty")
 
         # Cleanup
         os.remove(test_output)

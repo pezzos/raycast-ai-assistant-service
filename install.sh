@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -x  # Enable debug mode
+# set -x  # Enable debug mode
 
 # Check if running as root
 if [ "$EUID" -ne 0 ]; then
@@ -10,6 +10,8 @@ fi
 
 SOCKET_PATH="/tmp/raycast_audio_service.sock"
 SOX_PATH="/opt/homebrew/bin/sox"
+CONFIG_DIR="/usr/local/etc"
+CONFIG_FILE="$CONFIG_DIR/raycast-audio-service.json"
 
 # Find Python path
 PYTHON_PATH=$(which python3)
@@ -48,6 +50,52 @@ echo "Created service directory: $SERVICE_DIR"
 cp audio_service.py "$SERVICE_DIR/"
 chmod +x "$SERVICE_DIR/audio_service.py"
 echo "Copied service file to: $SERVICE_DIR/audio_service.py"
+
+# List available audio inputs
+echo -e "\nAvailable audio input devices:"
+system_profiler -json SPAudioDataType | jq -r '.SPAudioDataType[0]._items[] | select(.coreaudio_input_source) | ._name'
+
+# Find default input device
+default_device=$(system_profiler -json SPAudioDataType | jq -r '.SPAudioDataType[0]._items[] | select(.coreaudio_input_source) | select(.coreaudio_default_audio_input_device) | ._name')
+if [ -n "$default_device" ]; then
+    echo -e "\nCurrent default input device: $default_device"
+else
+    echo -e "\nWarning: Could not detect default input device"
+fi
+
+# Ask if user wants to configure a specific input device
+read -p "Do you want to use the default input device? [Y/n] " -n 1 -r
+echo
+if [[ $REPLY =~ ^[Nn]$ ]]; then
+    # Create config directory if it doesn't exist
+    mkdir -p "$CONFIG_DIR"
+
+    # Get list of input devices (only actual devices, no technical details)
+    devices=$(system_profiler -json SPAudioDataType | jq -r '.SPAudioDataType[0]._items[] | select(.coreaudio_input_source) | ._name' | sort -u)
+
+    echo -e "\nAvailable devices:"
+    i=1
+    while IFS= read -r device; do
+        echo "$i) $device"
+        ((i++))
+    done <<< "$devices"
+
+    read -p "Enter the number of the device to use (or press Enter for MacBook internal mic): " choice
+
+    if [ -n "$choice" ]; then
+        selected_device=$(echo "$devices" | sed -n "${choice}p")
+        if [ -n "$selected_device" ]; then
+            echo "{\"input_device\": \"$selected_device\"}" > "$CONFIG_FILE"
+            echo "Configured to use: $selected_device"
+        else
+            echo "Invalid choice, using default microphone"
+            rm -f "$CONFIG_FILE"
+        fi
+    else
+        echo "Using default MacBook internal microphone"
+        rm -f "$CONFIG_FILE"
+    fi
+fi
 
 # Create plist with correct Python path
 cat > /Library/LaunchDaemons/com.raycast.audio-service.plist << EOF
